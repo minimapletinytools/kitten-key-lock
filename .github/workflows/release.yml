@@ -1,0 +1,65 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          sw_vers
+          uname -m
+          swift --version
+
+      - name: Build universal app
+        env:
+          UNIVERSAL: "1"
+        run: ./build.sh
+
+      - name: Verify app
+        run: |
+          lipo -info dist/PoohBooLock.app/Contents/MacOS/PoohBooLock
+          codesign --verify --verbose=2 dist/PoohBooLock.app
+          plutil -lint dist/PoohBooLock.app/Contents/Info.plist
+          dist/PoohBooLock.app/Contents/MacOS/PoohBooLock --version
+
+      - name: Package
+        run: |
+          mkdir -p dist/release
+          ditto dist/PoohBooLock.app dist/release/PoohBooLock.app
+          cp packaging/install.command dist/release/install.command
+          chmod +x dist/release/install.command
+          (cd dist/release && zip -qry ../PoohBooLock.zip .)
+          (cd dist && shasum -a 256 PoohBooLock.zip > PoohBooLock.zip.sha256)
+          ls -lh dist/PoohBooLock.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PoohBooLock-${{ github.sha }}
+          path: |
+            dist/PoohBooLock.zip
+            dist/PoohBooLock.zip.sha256
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/PoohBooLock.zip \
+            dist/PoohBooLock.zip.sha256 \
+            --verify-tag \
+            --title "PoohBooLock $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md
